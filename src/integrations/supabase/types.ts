@@ -14,7 +14,102 @@ export type Database = {
   }
   public: {
     Tables: {
-      [_ in never]: never
+      camera_configs: {
+        Row: {
+          camera_name: string
+          camera_url: string | null
+          created_at: string | null
+          detection_enabled: boolean | null
+          id: string
+          is_active: boolean | null
+          location: string
+          updated_at: string | null
+        }
+        Insert: {
+          camera_name: string
+          camera_url?: string | null
+          created_at?: string | null
+          detection_enabled?: boolean | null
+          id?: string
+          is_active?: boolean | null
+          location: string
+          updated_at?: string | null
+        }
+        Update: {
+          camera_name?: string
+          camera_url?: string | null
+          created_at?: string | null
+          detection_enabled?: boolean | null
+          id?: string
+          is_active?: boolean | null
+          location?: string
+          updated_at?: string | null
+        }
+        Relationships: []
+      }
+      system_logs: {
+        Row: {
+          details: Json | null
+          id: string
+          log_type: string | null
+          message: string
+          timestamp: string | null
+        }
+        Insert: {
+          details?: Json | null
+          id?: string
+          log_type?: string | null
+          message: string
+          timestamp?: string | null
+        }
+        Update: {
+          details?: Json | null
+          id?: string
+          log_type?: string | null
+          message?: string
+          timestamp?: string | null
+        }
+        Relationships: []
+      }
+      vehicle_detections: {
+        Row: {
+          camera_location: string | null
+          confidence_score: number | null
+          created_at: string | null
+          detection_timestamp: string | null
+          id: string
+          image_url: string | null
+          plate_number: string
+          status: string | null
+          updated_at: string | null
+          vehicle_type: string | null
+        }
+        Insert: {
+          camera_location?: string | null
+          confidence_score?: number | null
+          created_at?: string | null
+          detection_timestamp?: string | null
+          id?: string
+          image_url?: string | null
+          plate_number: string
+          status?: string | null
+          updated_at?: string | null
+          vehicle_type?: string | null
+        }
+        Update: {
+          camera_location?: string | null
+          confidence_score?: number | null
+          created_at?: string | null
+          detection_timestamp?: string | null
+          id?: string
+          image_url?: string | null
+          plate_number?: string
+          status?: string | null
+          updated_at?: string | null
+          vehicle_type?: string | null
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
