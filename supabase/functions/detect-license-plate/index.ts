@@ -25,17 +25,28 @@ serve(async (req) => {
       )
     }
 
-    // For now, we'll simulate detection with a simple pattern detection
-    // In production, you would integrate with services like:
-    // - OpenALPR API
-    // - Plate Recognizer API
-    // - Google Vision API
-    // - AWS Rekognition
+    console.log('Processing image for license plate detection...')
     
-    // Simulate detection logic (replace with real API call)
-    const detectionResult = await simulatePlateDetection(imageData)
+    // Get API token from environment
+    const PLATE_RECOGNIZER_TOKEN = Deno.env.get('PLATE_RECOGNIZER_TOKEN')
+    
+    if (!PLATE_RECOGNIZER_TOKEN) {
+      console.error('PLATE_RECOGNIZER_TOKEN not found in environment')
+      return new Response(
+        JSON.stringify({ error: 'API configuration missing' }),
+        { 
+          status: 500, 
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        }
+      )
+    }
+
+    // Call Plate Recognizer API
+    const detectionResult = await detectPlateWithAPI(imageData, PLATE_RECOGNIZER_TOKEN)
     
     if (detectionResult.detected) {
+      console.log(`License plate detected: ${detectionResult.plateNumber} (${detectionResult.confidence}% confidence)`)
+      
       return new Response(
         JSON.stringify({
           plateNumber: detectionResult.plateNumber,
@@ -48,6 +59,7 @@ serve(async (req) => {
         }
       )
     } else {
+      console.log('No license plate detected in image')
       return new Response(
         JSON.stringify({ detected: false }),
         { 
@@ -60,7 +72,7 @@ serve(async (req) => {
   } catch (error) {
     console.error('Detection error:', error)
     return new Response(
-      JSON.stringify({ error: 'Detection failed' }),
+      JSON.stringify({ error: 'Detection failed', details: error.message }),
       { 
         status: 500, 
         headers: { ...corsHeaders, 'Content-Type': 'application/json' }
@@ -69,64 +81,65 @@ serve(async (req) => {
   }
 })
 
-// Simulated detection function (replace with real API integration)
-async function simulatePlateDetection(imageData: string) {
-  // This is a simulation - in production you would:
-  // 1. Send image to vision API
-  // 2. Process response for license plates
-  // 3. Extract text using OCR
-  // 4. Return structured data
-  
-  // Random detection simulation
-  const shouldDetect = Math.random() < 0.3 // 30% chance
-  
-  if (shouldDetect) {
-    const plateNumbers = [
-      'ABC-1234', 'XYZ-5678', 'DEF-9012', 
-      'GHI-3456', 'JKL-7890', 'MNO-2468',
-      'PQR-1357', 'STU-9753', 'VWX-8642'
-    ]
+// Real license plate detection using Plate Recognizer API
+async function detectPlateWithAPI(imageData: string, apiToken: string) {
+  try {
+    // Convert base64 image to blob for API
+    const base64Data = imageData.replace(/^data:image\/[a-z]+;base64,/, '')
     
-    return {
-      detected: true,
-      plateNumber: plateNumbers[Math.floor(Math.random() * plateNumbers.length)],
-      confidence: Math.floor(Math.random() * 20) + 80 // 80-99%
+    // Create form data for the API request
+    const formData = new FormData()
+    
+    // Convert base64 to blob
+    const byteCharacters = atob(base64Data)
+    const byteNumbers = new Array(byteCharacters.length)
+    for (let i = 0; i < byteCharacters.length; i++) {
+      byteNumbers[i] = byteCharacters.charCodeAt(i)
     }
-  }
-  
-  return { detected: false }
-}
-
-/* 
-TODO: Replace simulation with real API integration
-Example with Plate Recognizer API:
-
-const PLATE_RECOGNIZER_TOKEN = Deno.env.get('PLATE_RECOGNIZER_TOKEN')
-
-async function detectPlateWithAPI(imageData: string) {
-  const response = await fetch('https://api.platerecognizer.com/v1/plate-reader/', {
-    method: 'POST',
-    headers: {
-      'Authorization': `Token ${PLATE_RECOGNIZER_TOKEN}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      upload: imageData,
-      regions: ['us', 'eu'], // Specify regions
-    }),
-  })
-  
-  const result = await response.json()
-  
-  if (result.results && result.results.length > 0) {
-    const plate = result.results[0]
-    return {
-      detected: true,
-      plateNumber: plate.plate,
-      confidence: Math.round(plate.score * 100)
+    const byteArray = new Uint8Array(byteNumbers)
+    const blob = new Blob([byteArray], { type: 'image/jpeg' })
+    
+    formData.append('upload', blob, 'image.jpg')
+    formData.append('regions', 'us,eu,in') // Support multiple regions
+    
+    console.log('Calling Plate Recognizer API...')
+    
+    const response = await fetch('https://api.platerecognizer.com/v1/plate-reader/', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Token ${apiToken}`,
+      },
+      body: formData,
+    })
+    
+    if (!response.ok) {
+      console.error('API Response Error:', response.status, response.statusText)
+      const errorText = await response.text()
+      console.error('Error details:', errorText)
+      throw new Error(`API request failed: ${response.status} ${response.statusText}`)
     }
+    
+    const result = await response.json()
+    console.log('API Response:', JSON.stringify(result, null, 2))
+    
+    if (result.results && result.results.length > 0) {
+      const plate = result.results[0]
+      const confidence = Math.round(plate.score * 100)
+      
+      // Only return plates with reasonable confidence (above 70%)
+      if (confidence >= 70) {
+        return {
+          detected: true,
+          plateNumber: plate.plate.toUpperCase(),
+          confidence: confidence
+        }
+      }
+    }
+    
+    return { detected: false }
+    
+  } catch (error) {
+    console.error('Error in detectPlateWithAPI:', error)
+    throw error
   }
-  
-  return { detected: false }
 }
-*/
