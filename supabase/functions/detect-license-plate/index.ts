@@ -26,9 +26,8 @@ serve(async (req) => {
       )
     }
 
-    console.log('Processing image for license plate detection...')
+    console.log('Processing image for high-precision license plate detection...')
     console.log('Image data length:', imageData.length)
-    console.log('Image data prefix:', imageData.substring(0, 50))
     
     // Get API token from environment
     const PLATE_RECOGNIZER_TOKEN = Deno.env.get('PLATE_RECOGNIZER_TOKEN')
@@ -44,13 +43,13 @@ serve(async (req) => {
       )
     }
 
-    console.log('API token found, length:', PLATE_RECOGNIZER_TOKEN.length)
+    console.log('API token found, processing with high-precision detection...')
 
     // Call Plate Recognizer API
     const detectionResult = await detectPlateWithAPI(imageData, PLATE_RECOGNIZER_TOKEN)
     
-    if (detectionResult.detected) {
-      console.log(`License plate detected: ${detectionResult.plateNumber} (${detectionResult.confidence}% confidence)`)
+    if (detectionResult.detected && detectionResult.confidence >= 95) {
+      console.log(`HIGH-CONFIDENCE license plate detected: ${detectionResult.plateNumber} (${detectionResult.confidence}% confidence)`)
       
       return new Response(
         JSON.stringify({
@@ -63,10 +62,24 @@ serve(async (req) => {
           headers: { ...corsHeaders, 'Content-Type': 'application/json' }
         }
       )
+    } else if (detectionResult.detected && detectionResult.confidence < 95) {
+      console.log(`Low-confidence detection rejected: ${detectionResult.plateNumber} (${detectionResult.confidence}% confidence - below 95% threshold)`)
+      return new Response(
+        JSON.stringify({ 
+          detected: false, 
+          reason: 'confidence_too_low',
+          confidence: detectionResult.confidence,
+          plateNumber: detectionResult.plateNumber
+        }),
+        { 
+          status: 200, 
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        }
+      )
     } else {
       console.log('No license plate detected in image')
       return new Response(
-        JSON.stringify({ detected: false }),
+        JSON.stringify({ detected: false, reason: 'no_plate_found' }),
         { 
           status: 200, 
           headers: { ...corsHeaders, 'Content-Type': 'application/json' }
@@ -95,10 +108,10 @@ serve(async (req) => {
   }
 })
 
-// Real license plate detection using Plate Recognizer API
+// High-precision license plate detection using Plate Recognizer API
 async function detectPlateWithAPI(imageData: string, apiToken: string) {
   try {
-    console.log('Starting API detection process...')
+    console.log('Starting high-precision API detection process...')
     
     // Validate image data format
     if (!imageData.startsWith('data:image/')) {
@@ -140,9 +153,9 @@ async function detectPlateWithAPI(imageData: string, apiToken: string) {
     
     formData.append('upload', blob, 'image.jpg')
     formData.append('regions', 'us-ca') // North America regions
+    formData.append('camera_id', 'high_precision_camera') // Add camera ID for better tracking
     
-    console.log('Calling Plate Recognizer API...')
-    console.log('API URL: https://api.platerecognizer.com/v1/plate-reader/')
+    console.log('Calling Plate Recognizer API for high-precision detection...')
     
     const response = await fetch('https://api.platerecognizer.com/v1/plate-reader/', {
       method: 'POST',
@@ -153,7 +166,6 @@ async function detectPlateWithAPI(imageData: string, apiToken: string) {
     })
     
     console.log('API Response status:', response.status)
-    console.log('API Response headers:', Object.fromEntries(response.headers.entries()))
     
     if (!response.ok) {
       const errorText = await response.text()
@@ -176,20 +188,17 @@ async function detectPlateWithAPI(imageData: string, apiToken: string) {
     console.log('API Response data:', JSON.stringify(result, null, 2))
     
     if (result.results && result.results.length > 0) {
-      const plate = result.results[0]
+      // Sort results by confidence and get the highest one
+      const sortedResults = result.results.sort((a: any, b: any) => b.score - a.score)
+      const plate = sortedResults[0]
       const confidence = Math.round(plate.score * 100)
       
       console.log(`Found plate: ${plate.plate} with ${confidence}% confidence`)
       
-      // Only return plates with reasonable confidence (above 70%)
-      if (confidence >= 70) {
-        return {
-          detected: true,
-          plateNumber: plate.plate.toUpperCase(),
-          confidence: confidence
-        }
-      } else {
-        console.log(`Confidence too low: ${confidence}% - rejecting detection`)
+      return {
+        detected: true,
+        plateNumber: plate.plate.toUpperCase(),
+        confidence: confidence
       }
     } else {
       console.log('No plates found in API response')

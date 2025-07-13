@@ -8,10 +8,12 @@ import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
 
 interface LiveCameraFeedProps {
-  onDetection: (plateNumber: string, confidence: number, imageData?: string) => void;
+  onDetection: (plateNumber: string, confidence: number, imageData?: string, cameraType?: 'entry' | 'exit') => void;
+  cameraType?: 'entry' | 'exit';
+  title?: string;
 }
 
-const LiveCameraFeed = ({ onDetection }: LiveCameraFeedProps) => {
+const LiveCameraFeed = ({ onDetection, cameraType = 'entry', title }: LiveCameraFeedProps) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -23,8 +25,12 @@ const LiveCameraFeed = ({ onDetection }: LiveCameraFeedProps) => {
   const [cameraPermission, setCameraPermission] = useState<'granted' | 'denied' | 'prompt'>('prompt');
   const [lastProcessTime, setLastProcessTime] = useState<Date | null>(null);
   const [processingStatus, setProcessingStatus] = useState<string>('Ready');
+  const [nextScanCountdown, setNextScanCountdown] = useState<number>(0);
   
   const { toast } = useToast();
+
+  // Get random interval between 5-7 seconds
+  const getRandomScanInterval = () => Math.floor(Math.random() * 3000) + 5000; // 5000-8000ms
 
   // Initialize camera stream
   const startCamera = useCallback(async () => {
@@ -43,12 +49,12 @@ const LiveCameraFeed = ({ onDetection }: LiveCameraFeedProps) => {
         streamRef.current = stream;
         setIsStreaming(true);
         setCameraPermission('granted');
-        setProcessingStatus('Camera Active');
-        console.log('Camera stream started successfully');
+        setProcessingStatus(`${cameraType.charAt(0).toUpperCase() + cameraType.slice(1)} Camera Active`);
+        console.log(`${cameraType} camera stream started successfully`);
         
         toast({
           title: "Camera Started",
-          description: "Live camera feed is now active",
+          description: `${cameraType.charAt(0).toUpperCase() + cameraType.slice(1)} camera feed is now active`,
         });
       }
     } catch (err) {
@@ -64,7 +70,7 @@ const LiveCameraFeed = ({ onDetection }: LiveCameraFeedProps) => {
         variant: "destructive"
       });
     }
-  }, [toast]);
+  }, [toast, cameraType]);
 
   // Stop camera stream
   const stopCamera = useCallback(() => {
@@ -78,12 +84,13 @@ const LiveCameraFeed = ({ onDetection }: LiveCameraFeedProps) => {
     setIsStreaming(false);
     setIsProcessing(false);
     setProcessingStatus('Camera Stopped');
+    setNextScanCountdown(0);
     
     toast({
       title: "Camera Stopped",
-      description: "Live camera feed has been stopped",
+      description: `${cameraType.charAt(0).toUpperCase() + cameraType.slice(1)} camera feed has been stopped`,
     });
-  }, [toast]);
+  }, [toast, cameraType]);
 
   // Process frame for license plate detection
   const processFrame = useCallback(async () => {
@@ -109,7 +116,7 @@ const LiveCameraFeed = ({ onDetection }: LiveCameraFeedProps) => {
     const imageData = canvas.toDataURL('image/jpeg', 0.8);
     
     try {
-      console.log('Sending frame to detection API...');
+      console.log(`Sending frame to detection API for ${cameraType} camera...`);
       
       // Call Edge Function for plate detection
       const { data, error } = await supabase.functions.invoke('detect-license-plate', {
@@ -127,36 +134,41 @@ const LiveCameraFeed = ({ onDetection }: LiveCameraFeedProps) => {
         return;
       }
 
-      if (data && data.detected && data.plateNumber) {
-        console.log(`License plate detected: ${data.plateNumber} (${data.confidence}% confidence)`);
+      if (data && data.detected && data.plateNumber && data.confidence >= 95) {
+        console.log(`High-confidence license plate detected on ${cameraType}: ${data.plateNumber} (${data.confidence}% confidence)`);
         
         setDetectionActive(true);
-        setProcessingStatus(`Detected: ${data.plateNumber}`);
+        setProcessingStatus(`Detected: ${data.plateNumber} (${data.confidence}%)`);
         
-        onDetection(data.plateNumber, data.confidence || 85, imageData);
+        onDetection(data.plateNumber, data.confidence, imageData, cameraType);
         
         // Log detection to system logs
         await supabase.from('system_logs').insert({
           log_type: 'detection',
-          message: `License plate detected: ${data.plateNumber}`,
+          message: `High-confidence license plate detected on ${cameraType}: ${data.plateNumber}`,
           details: {
             confidence: data.confidence,
             timestamp: new Date().toISOString(),
-            camera_location: 'Live Camera Feed'
+            camera_location: `${cameraType.charAt(0).toUpperCase() + cameraType.slice(1)} Camera`,
+            camera_type: cameraType
           }
         });
 
         toast({
-          title: "License Plate Detected!",
-          description: `${data.plateNumber} (${data.confidence}% confidence)`,
+          title: "High-Confidence Detection!",
+          description: `${data.plateNumber} (${data.confidence}% confidence) - ${cameraType.charAt(0).toUpperCase() + cameraType.slice(1)} Camera`,
         });
 
         setTimeout(() => {
           setDetectionActive(false);
           setProcessingStatus('Monitoring');
         }, 3000);
+      } else if (data && data.detected && data.confidence < 95) {
+        console.log(`Low-confidence detection ignored: ${data.plateNumber} (${data.confidence}% confidence)`);
+        setProcessingStatus(`Low Confidence: ${data.confidence}% - Ignored`);
+        setTimeout(() => setProcessingStatus('Monitoring'), 2000);
       } else {
-        setProcessingStatus('No Plate Detected');
+        setProcessingStatus('No High-Confidence Plate Detected');
         setTimeout(() => setProcessingStatus('Monitoring'), 1000);
       }
     } catch (err) {
@@ -168,7 +180,7 @@ const LiveCameraFeed = ({ onDetection }: LiveCameraFeedProps) => {
         variant: "destructive"
       });
     }
-  }, [isStreaming, onDetection, toast]);
+  }, [isStreaming, onDetection, toast, cameraType]);
 
   // Start/stop processing
   const toggleProcessing = useCallback(() => {
@@ -176,24 +188,56 @@ const LiveCameraFeed = ({ onDetection }: LiveCameraFeedProps) => {
       setProcessingStatus('Starting Detection...');
       toast({
         title: "Detection Started",
-        description: "Now scanning for license plates",
+        description: `Now scanning for license plates every 5-7 seconds on ${cameraType} camera`,
       });
     } else {
       setProcessingStatus('Stopping Detection...');
+      setNextScanCountdown(0);
       toast({
         title: "Detection Stopped",
-        description: "License plate scanning paused",
+        description: `License plate scanning paused on ${cameraType} camera`,
       });
     }
     setIsProcessing(!isProcessing);
-  }, [isProcessing, toast]);
+  }, [isProcessing, toast, cameraType]);
 
-  // Process frames at regular intervals
+  // Process frames at random intervals between 5-7 seconds
   useEffect(() => {
     if (!isProcessing || !isStreaming) return;
 
-    const interval = setInterval(processFrame, 3000); // Process every 3 seconds to avoid API rate limits
-    return () => clearInterval(interval);
+    let timeoutId: NodeJS.Timeout;
+    let countdownId: NodeJS.Timeout;
+
+    const scheduleNextScan = () => {
+      const interval = getRandomScanInterval();
+      let countdown = Math.ceil(interval / 1000);
+      setNextScanCountdown(countdown);
+
+      // Update countdown every second
+      const updateCountdown = () => {
+        countdown--;
+        setNextScanCountdown(countdown);
+        if (countdown > 0) {
+          countdownId = setTimeout(updateCountdown, 1000);
+        }
+      };
+      updateCountdown();
+
+      timeoutId = setTimeout(() => {
+        processFrame().then(() => {
+          if (isProcessing && isStreaming) {
+            scheduleNextScan();
+          }
+        });
+      }, interval);
+    };
+
+    scheduleNextScan();
+
+    return () => {
+      clearTimeout(timeoutId);
+      clearTimeout(countdownId);
+    };
   }, [isProcessing, isStreaming, processFrame]);
 
   // Cleanup on unmount
@@ -203,13 +247,15 @@ const LiveCameraFeed = ({ onDetection }: LiveCameraFeedProps) => {
     };
   }, [stopCamera]);
 
+  const displayTitle = title || `Live License Plate Detection - ${cameraType.charAt(0).toUpperCase() + cameraType.slice(1)} Camera`;
+
   return (
     <Card className="h-full">
       <CardHeader className="pb-2">
         <CardTitle className="flex items-center justify-between text-lg">
           <div className="flex items-center gap-2">
             <Camera className="w-5 h-5" />
-            Live License Plate Detection
+            {displayTitle}
           </div>
           <div className="flex items-center gap-2">
             <Badge variant={isStreaming ? "default" : "destructive"} className="gap-1">
@@ -219,7 +265,17 @@ const LiveCameraFeed = ({ onDetection }: LiveCameraFeedProps) => {
             {isProcessing && (
               <Badge variant="secondary" className="gap-1">
                 <Eye className="w-3 h-3" />
-                Detecting
+                Scanning
+              </Badge>
+            )}
+            {cameraType === 'entry' && (
+              <Badge variant="outline" className="bg-green-50 text-green-700">
+                Entry
+              </Badge>
+            )}
+            {cameraType === 'exit' && (
+              <Badge variant="outline" className="bg-red-50 text-red-700">
+                Exit
               </Badge>
             )}
           </div>
@@ -283,7 +339,7 @@ const LiveCameraFeed = ({ onDetection }: LiveCameraFeedProps) => {
                 <div className="absolute inset-0 flex items-center justify-center">
                   <div className="relative animate-pulse">
                     <div className="w-64 h-16 border-4 border-green-500 bg-green-500/20 rounded-lg flex items-center justify-center">
-                      <span className="text-green-500 font-bold text-lg">LICENSE PLATE DETECTED!</span>
+                      <span className="text-green-500 font-bold text-lg">HIGH-CONFIDENCE DETECTION!</span>
                     </div>
                   </div>
                 </div>
@@ -298,8 +354,13 @@ const LiveCameraFeed = ({ onDetection }: LiveCameraFeedProps) => {
                   <div className="absolute bottom-4 right-4 text-xs text-white bg-black/70 px-3 py-1 rounded">
                     {processingStatus}
                   </div>
+                  {nextScanCountdown > 0 && isProcessing && (
+                    <div className="absolute bottom-4 left-4 text-xs text-white bg-blue-700/90 px-3 py-1 rounded">
+                      Next scan in: {nextScanCountdown}s
+                    </div>
+                  )}
                   {lastProcessTime && (
-                    <div className="absolute bottom-4 left-4 text-xs text-white bg-black/70 px-3 py-1 rounded">
+                    <div className="absolute top-4 right-4 text-xs text-white bg-black/70 px-3 py-1 rounded">
                       Last Scan: {lastProcessTime.toLocaleTimeString()}
                     </div>
                   )}
@@ -313,6 +374,9 @@ const LiveCameraFeed = ({ onDetection }: LiveCameraFeedProps) => {
                     <Camera className="w-16 h-16 mx-auto mb-4 opacity-50" />
                     <p className="text-lg font-semibold mb-2">Camera Not Active</p>
                     <p className="text-sm">Click "Start Camera" to begin license plate detection</p>
+                    <p className="text-xs mt-2 text-gray-500">
+                      {cameraType.charAt(0).toUpperCase() + cameraType.slice(1)} Camera - 95%+ Confidence Required
+                    </p>
                   </div>
                 </div>
               )}
@@ -326,21 +390,21 @@ const LiveCameraFeed = ({ onDetection }: LiveCameraFeedProps) => {
               <span className="font-medium">{processingStatus}</span>
             </div>
             <div className="flex justify-between">
-              <span className="text-muted-foreground">Permission:</span>
-              <span className="font-medium capitalize">{cameraPermission}</span>
+              <span className="text-muted-foreground">Camera Type:</span>
+              <span className="font-medium capitalize">{cameraType}</span>
             </div>
           </div>
 
           {/* Detection Info */}
           <div className="p-3 bg-muted rounded-lg">
             <p className="text-sm text-muted-foreground mb-2">
-              <strong>Real-Time License Plate Detection:</strong>
+              <strong>High-Precision License Plate Detection:</strong>
             </p>
             <ul className="text-xs text-muted-foreground space-y-1">
-              <li>• Uses Plate Recognizer API for accurate detection</li>
-              <li>• Scans frames every 3 seconds when detection is active</li>
-              <li>• Minimum 70% confidence required for valid detections</li>
-              <li>• All detections are automatically saved to database</li>
+              <li>• Scans every 5-7 seconds to avoid API rate limits</li>
+              <li>• Only saves detections with 95%+ confidence</li>
+              <li>• Camera type: {cameraType.charAt(0).toUpperCase() + cameraType.slice(1)}</li>
+              <li>• All high-confidence detections are automatically saved</li>
             </ul>
           </div>
         </div>

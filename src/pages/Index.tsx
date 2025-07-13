@@ -16,6 +16,7 @@ interface Detection {
   timestamp: Date;
   confidence: number;
   location: string;
+  cameraType?: 'entry' | 'exit';
 }
 
 const Index = () => {
@@ -31,7 +32,7 @@ const Index = () => {
         .from('vehicle_detections')
         .select('*')
         .order('detection_timestamp', { ascending: false })
-        .limit(50);
+        .limit(100);
 
       if (error) {
         console.error('Error loading detections:', error);
@@ -48,7 +49,8 @@ const Index = () => {
         plateNumber: detection.plate_number,
         timestamp: new Date(detection.detection_timestamp || detection.created_at),
         confidence: detection.confidence_score || 0,
-        location: detection.camera_location || 'Live Camera Feed'
+        location: detection.camera_location || 'Unknown Camera',
+        cameraType: detection.camera_location?.toLowerCase().includes('exit') ? 'exit' : 'entry'
       }));
 
       setDetections(formattedDetections);
@@ -60,17 +62,20 @@ const Index = () => {
   }, [toast]);
 
   // Handle new detection from camera
-  const handleNewDetection = useCallback(async (plateNumber: string, confidence: number, imageData?: string) => {
+  const handleNewDetection = useCallback(async (plateNumber: string, confidence: number, imageData?: string, cameraType: 'entry' | 'exit' = 'entry') => {
     try {
+      const cameraLocation = `${cameraType.charAt(0).toUpperCase() + cameraType.slice(1)} Camera`;
+      
       // Save to database
       const { data, error } = await supabase
         .from('vehicle_detections')
         .insert({
           plate_number: plateNumber,
           confidence_score: confidence,
-          camera_location: 'Live Camera Feed',
+          camera_location: cameraLocation,
           image_url: imageData, // Store base64 image data
-          status: 'detected'
+          status: 'detected',
+          vehicle_type: 'vehicle' // Default type
         })
         .select()
         .single();
@@ -91,17 +96,18 @@ const Index = () => {
         plateNumber: plateNumber,
         timestamp: new Date(),
         confidence: confidence,
-        location: 'Live Camera Feed'
+        location: cameraLocation,
+        cameraType: cameraType
       };
       
-      setDetections(prev => [newDetection, ...prev].slice(0, 50));
+      setDetections(prev => [newDetection, ...prev].slice(0, 100));
       
       toast({
-        title: "Vehicle Detected",
+        title: `Vehicle ${cameraType === 'entry' ? 'Entered' : 'Exited'}`,
         description: `License plate: ${plateNumber} (${confidence}% confidence)`,
       });
 
-      console.log('New vehicle detected and saved:', plateNumber);
+      console.log(`New vehicle detected and saved - ${cameraType.toUpperCase()}:`, plateNumber);
     } catch (err) {
       console.error('Error handling detection:', err);
       toast({
@@ -131,9 +137,9 @@ const Index = () => {
 
       // Convert to CSV
       const csvContent = [
-        'Plate Number,Confidence,Detection Time,Camera Location,Status',
+        'Plate Number,Confidence,Detection Time,Camera Location,Status,Vehicle Type',
         ...data.map(d => 
-          `${d.plate_number},${d.confidence_score}%,${new Date(d.detection_timestamp || d.created_at).toLocaleString()},${d.camera_location},${d.status}`
+          `${d.plate_number},${d.confidence_score}%,${new Date(d.detection_timestamp || d.created_at).toLocaleString()},${d.camera_location},${d.status},${d.vehicle_type || 'vehicle'}`
         )
       ].join('\n');
 
@@ -201,7 +207,7 @@ const Index = () => {
                 <Eye className="w-8 h-8 text-primary" />
                 <div>
                   <h1 className="text-2xl font-bold">PlateEye Surveillance</h1>
-                  <p className="text-sm text-muted-foreground">Live License Plate Recognition System</p>
+                  <p className="text-sm text-muted-foreground">High-Precision License Plate Recognition System</p>
                 </div>
               </div>
             </div>
@@ -235,20 +241,33 @@ const Index = () => {
 
       {/* Main Dashboard */}
       <main className="container mx-auto px-6 py-6">
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 h-[calc(100vh-140px)]">
-          {/* Live Camera Feed - Takes up 2 columns on large screens */}
-          <div className="lg:col-span-2">
-            <LiveCameraFeed onDetection={handleNewDetection} />
+        <div className="space-y-6">
+          {/* Camera Feeds - Entry and Exit */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <LiveCameraFeed 
+              onDetection={handleNewDetection} 
+              cameraType="entry"
+              title="Entry Gate - License Plate Detection"
+            />
+            <LiveCameraFeed 
+              onDetection={handleNewDetection} 
+              cameraType="exit"
+              title="Exit Gate - License Plate Detection"
+            />
           </div>
           
-          {/* Detection Results */}
-          <div className="space-y-6">
-            <DetectionResults detections={detections} />
-            <SystemStats detections={detections} />
+          {/* Detection Results and Stats */}
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            <div className="lg:col-span-2">
+              <DetectionResults detections={detections} />
+            </div>
+            <div>
+              <SystemStats detections={detections} />
+            </div>
           </div>
           
-          {/* Vehicle Log - Full width on small screens, spans all columns on large */}
-          <div className="lg:col-span-3">
+          {/* Vehicle Log */}
+          <div>
             <VehicleLog detections={detections} />
           </div>
         </div>
