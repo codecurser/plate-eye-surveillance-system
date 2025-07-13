@@ -47,6 +47,36 @@ export type Database = {
         }
         Relationships: []
       }
+      fare_rates: {
+        Row: {
+          created_at: string | null
+          grace_period_minutes: number | null
+          hourly_rate: number
+          id: string
+          is_active: boolean | null
+          minimum_charge: number | null
+          rate_name: string
+        }
+        Insert: {
+          created_at?: string | null
+          grace_period_minutes?: number | null
+          hourly_rate?: number
+          id?: string
+          is_active?: boolean | null
+          minimum_charge?: number | null
+          rate_name: string
+        }
+        Update: {
+          created_at?: string | null
+          grace_period_minutes?: number | null
+          hourly_rate?: number
+          id?: string
+          is_active?: boolean | null
+          minimum_charge?: number | null
+          rate_name?: string
+        }
+        Relationships: []
+      }
       system_logs: {
         Row: {
           details: Json | null
@@ -77,6 +107,11 @@ export type Database = {
           confidence_score: number | null
           created_at: string | null
           detection_timestamp: string | null
+          duration_hours: number | null
+          entry_time: string | null
+          exit_time: string | null
+          fare_amount: number | null
+          hourly_rate: number | null
           id: string
           image_url: string | null
           plate_number: string
@@ -89,6 +124,11 @@ export type Database = {
           confidence_score?: number | null
           created_at?: string | null
           detection_timestamp?: string | null
+          duration_hours?: number | null
+          entry_time?: string | null
+          exit_time?: string | null
+          fare_amount?: number | null
+          hourly_rate?: number | null
           id?: string
           image_url?: string | null
           plate_number: string
@@ -101,6 +141,11 @@ export type Database = {
           confidence_score?: number | null
           created_at?: string | null
           detection_timestamp?: string | null
+          duration_hours?: number | null
+          entry_time?: string | null
+          exit_time?: string | null
+          fare_amount?: number | null
+          hourly_rate?: number | null
           id?: string
           image_url?: string | null
           plate_number?: string
@@ -115,7 +160,19 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
-      [_ in never]: never
+      calculate_vehicle_fare: {
+        Args: {
+          entry_timestamp: string
+          exit_timestamp: string
+          rate_per_hour?: number
+          minimum_charge?: number
+          grace_minutes?: number
+        }
+        Returns: {
+          duration_hours: number
+          fare_amount: number
+        }[]
+      }
     }
     Enums: {
       [_ in never]: never

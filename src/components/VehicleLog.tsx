@@ -4,7 +4,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Separator } from '@/components/ui/separator';
-import { FileText, TrendingUp } from 'lucide-react';
+import { FileText, TrendingUp, DollarSign, Timer, ArrowRight } from 'lucide-react';
 
 interface Detection {
   id: string;
@@ -12,6 +12,9 @@ interface Detection {
   timestamp: Date;
   confidence: number;
   location: string;
+  cameraType?: 'entry' | 'exit';
+  fareAmount?: number;
+  durationHours?: number;
 }
 
 const VehicleLog = ({ detections }: { detections: Detection[] }) => {
@@ -21,7 +24,7 @@ const VehicleLog = ({ detections }: { detections: Detection[] }) => {
         <CardTitle className="flex items-center justify-between text-lg">
           <div className="flex items-center gap-2">
             <FileText className="w-5 h-5" />
-            Vehicle Log
+            Vehicle Activity Log
           </div>
           <Badge variant="outline" className="gap-1">
             <TrendingUp className="w-3 h-3" />
@@ -37,16 +40,44 @@ const VehicleLog = ({ detections }: { detections: Detection[] }) => {
                 <div key={detection.id}>
                   <div className="flex items-center justify-between py-2">
                     <div className="flex-1">
-                      <div className="flex items-center gap-3">
+                      <div className="flex items-center gap-3 flex-wrap">
                         <span className="license-plate font-bold text-primary">
                           {detection.plateNumber}
                         </span>
                         <Badge variant="secondary" className="text-xs">
                           {detection.confidence}%
                         </Badge>
+                        {detection.cameraType === 'entry' && (
+                          <Badge variant="outline" className="bg-green-50 text-green-700 text-xs">
+                            <ArrowRight className="w-3 h-3 mr-1" />
+                            Entry
+                          </Badge>
+                        )}
+                        {detection.cameraType === 'exit' && (
+                          <Badge variant="outline" className="bg-red-50 text-red-700 text-xs">
+                            <ArrowRight className="w-3 h-3 mr-1 rotate-180" />
+                            Exit
+                          </Badge>
+                        )}
+                        {detection.fareAmount && (
+                          <Badge variant="default" className="bg-green-600 text-white text-xs">
+                            <DollarSign className="w-3 h-3 mr-1" />
+                            ${detection.fareAmount.toFixed(2)}
+                          </Badge>
+                        )}
                       </div>
-                      <div className="text-xs text-muted-foreground mt-1">
-                        {detection.timestamp.toLocaleString()} • {detection.location}
+                      <div className="text-xs text-muted-foreground mt-1 flex items-center gap-4 flex-wrap">
+                        <span>{detection.timestamp.toLocaleString()}</span>
+                        <span>• {detection.location}</span>
+                        {detection.durationHours && (
+                          <>
+                            <span>•</span>
+                            <span className="flex items-center gap-1">
+                              <Timer className="w-3 h-3" />
+                              {detection.durationHours.toFixed(1)}h parked
+                            </span>
+                          </>
+                        )}
                       </div>
                     </div>
                   </div>
