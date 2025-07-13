@@ -65,245 +65,276 @@ const Index = () => {
     }
   }, [toast]);
 
-  // Handle new detection from camera
-  const handleNewDetection = useCallback(async (plateNumber: string, confidence: number, imageData?: string, cameraType: 'entry' | 'exit' = 'entry') => {
+  // Get active fare rates
+  const getFareRates = useCallback(async () => {
+    const { data: fareRates, error } = await supabase
+      .from('fare_rates')
+      .select('*')
+      .eq('is_active', true)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .single();
+
+    if (error) {
+      console.error('Error fetching fare rates:', error);
+      // Return default rates if none found
+      return {
+        hourly_rate: 10.00,
+        minimum_charge: 5.00,
+        grace_period_minutes: 15
+      };
+    }
+
+    return fareRates;
+  }, []);
+
+  // Handle entry detection
+  const handleEntryDetection = useCallback(async (plateNumber: string, confidence: number, imageData?: string) => {
     try {
-      const cameraLocation = `${cameraType.charAt(0).toUpperCase() + cameraType.slice(1)} Camera`;
+      console.log(`Processing entry detection for plate: ${plateNumber}`);
       
-      console.log(`Processing ${cameraType} detection for plate: ${plateNumber}`);
+      const entryTime = new Date();
+      const cameraLocation = "Entry Camera";
 
-      if (cameraType === 'entry') {
-        // Handle entry detection - just save the entry record
-        const { data, error } = await supabase
-          .from('vehicle_detections')
-          .insert({
-            plate_number: plateNumber,
-            confidence_score: confidence,
-            camera_location: cameraLocation,
-            image_url: imageData,
-            status: 'detected',
-            vehicle_type: 'vehicle',
-            entry_time: new Date().toISOString()
-          })
-          .select()
-          .single();
+      // Check if there's already an active entry for this plate (no exit recorded)
+      const { data: existingEntry, error: checkError } = await supabase
+        .from('vehicle_detections')
+        .select('*')
+        .eq('plate_number', plateNumber)
+        .is('exit_time', null)
+        .not('entry_time', 'is', null)
+        .order('entry_time', { ascending: false })
+        .limit(1);
 
-        if (error) {
-          console.error('Error saving entry detection:', error);
-          toast({
-            title: "Save Error",
-            description: "Failed to save entry detection to database",
-            variant: "destructive"
-          });
-          return;
-        }
+      if (checkError) {
+        console.error('Error checking existing entry:', checkError);
+      }
 
-        const newDetection: Detection = {
-          id: data.id,
-          plateNumber: plateNumber,
-          timestamp: new Date(),
-          confidence: confidence,
-          location: cameraLocation,
-          cameraType: cameraType
-        };
+      if (existingEntry && existingEntry.length > 0) {
+        console.log(`Vehicle ${plateNumber} already has an active entry. Updating entry time.`);
         
-        setDetections(prev => [newDetection, ...prev].slice(0, 100));
-        
-        toast({
-          title: "Vehicle Entered",
-          description: `License plate: ${plateNumber} - Entry recorded`,
-        });
-
-      } else if (cameraType === 'exit') {
-        // Handle exit detection - find matching entry and calculate fare
-        console.log(`Looking for entry record for plate: ${plateNumber}`);
-        
-        // Find the most recent entry for this plate number that doesn't have an exit time
-        const { data: entryRecords, error: entryError } = await supabase
-          .from('vehicle_detections')
-          .select('*')
-          .eq('plate_number', plateNumber)
-          .is('exit_time', null)
-          .not('entry_time', 'is', null)
-          .order('entry_time', { ascending: false })
-          .limit(1);
-
-        if (entryError) {
-          console.error('Error finding entry record:', entryError);
-          toast({
-            title: "Error",
-            description: "Failed to find entry record for vehicle",
-            variant: "destructive"
-          });
-          return;
-        }
-
-        if (!entryRecords || entryRecords.length === 0) {
-          console.log('No entry record found, creating exit-only record');
-          // No entry found, create exit-only record
-          const { data, error } = await supabase
-            .from('vehicle_detections')
-            .insert({
-              plate_number: plateNumber,
-              confidence_score: confidence,
-              camera_location: cameraLocation,
-              image_url: imageData,
-              status: 'detected',
-              vehicle_type: 'vehicle',
-              exit_time: new Date().toISOString()
-            })
-            .select()
-            .single();
-
-          if (error) {
-            console.error('Error saving exit-only detection:', error);
-            return;
-          }
-
-          toast({
-            title: "Vehicle Exited",
-            description: `License plate: ${plateNumber} - No entry record found`,
-            variant: "destructive"
-          });
-          return;
-        }
-
-        const entryRecord = entryRecords[0];
-        const entryTime = new Date(entryRecord.entry_time);
-        const exitTime = new Date();
-
-        console.log(`Found entry record from: ${entryTime.toISOString()}`);
-        console.log(`Exit time: ${exitTime.toISOString()}`);
-
-        // Get current fare rates
-        const { data: fareRates, error: fareError } = await supabase
-          .from('fare_rates')
-          .select('*')
-          .eq('is_active', true)
-          .limit(1)
-          .single();
-
-        if (fareError) {
-          console.error('Error fetching fare rates:', fareError);
-        }
-
-        const hourlyRate = fareRates?.hourly_rate || 10.00;
-        const minimumCharge = fareRates?.minimum_charge || 5.00;
-        const gracePeriod = fareRates?.grace_period_minutes || 15;
-
-        // Calculate fare using the database function
-        const { data: fareCalculation, error: fareCalcError } = await supabase
-          .rpc('calculate_vehicle_fare', {
-            entry_timestamp: entryTime.toISOString(),
-            exit_timestamp: exitTime.toISOString(),
-            rate_per_hour: hourlyRate,
-            minimum_charge: minimumCharge,
-            grace_minutes: gracePeriod
-          });
-
-        if (fareCalcError) {
-          console.error('Error calculating fare:', fareCalcError);
-          toast({
-            title: "Calculation Error",
-            description: "Failed to calculate parking fare",
-            variant: "destructive"
-          });
-          return;
-        }
-
-        const calculatedFare = fareCalculation?.[0];
-        const durationHours = calculatedFare?.duration_hours || 0;
-        const fareAmount = calculatedFare?.fare_amount || minimumCharge;
-
-        console.log(`Calculated fare: $${fareAmount} for ${durationHours} hours`);
-
-        // Update the entry record with exit information and fare
-        const { data: updatedRecord, error: updateError } = await supabase
+        // Update the existing entry with new timestamp
+        const { data: updatedEntry, error: updateError } = await supabase
           .from('vehicle_detections')
           .update({
-            exit_time: exitTime.toISOString(),
-            duration_hours: durationHours,
-            fare_amount: fareAmount,
-            hourly_rate: hourlyRate,
-            status: 'completed'
+            entry_time: entryTime.toISOString(),
+            detection_timestamp: entryTime.toISOString(),
+            confidence_score: confidence,
+            image_url: imageData
           })
-          .eq('id', entryRecord.id)
+          .eq('id', existingEntry[0].id)
           .select()
           .single();
 
         if (updateError) {
-          console.error('Error updating exit record:', updateError);
-          toast({
-            title: "Update Error",
-            description: "Failed to update exit information",
-            variant: "destructive"
-          });
-          return;
+          console.error('Error updating entry:', updateError);
+          throw updateError;
         }
 
-        // Create a new exit detection record for the log
-        const { data: exitRecord, error: exitError } = await supabase
+        toast({
+          title: "Entry Updated",
+          description: `${plateNumber} - Entry time updated`,
+        });
+      } else {
+        // Create new entry record
+        const { data: newEntry, error: insertError } = await supabase
           .from('vehicle_detections')
           .insert({
             plate_number: plateNumber,
             confidence_score: confidence,
             camera_location: cameraLocation,
             image_url: imageData,
-            status: 'exit',
+            status: 'entered',
             vehicle_type: 'vehicle',
-            exit_time: exitTime.toISOString(),
             entry_time: entryTime.toISOString(),
-            duration_hours: durationHours,
-            fare_amount: fareAmount,
-            hourly_rate: hourlyRate
+            detection_timestamp: entryTime.toISOString()
           })
           .select()
           .single();
 
-        // Add to local state
-        const exitDetection: Detection = {
-          id: exitRecord?.id || Date.now().toString(),
-          plateNumber: plateNumber,
-          timestamp: exitTime,
-          confidence: confidence,
-          location: cameraLocation,
-          cameraType: cameraType,
-          fareAmount: Number(fareAmount),
-          durationHours: Number(durationHours)
-        };
-        
-        setDetections(prev => [exitDetection, ...prev].slice(0, 100));
-        
-        // Log the fare calculation
-        await supabase.from('system_logs').insert({
-          log_type: 'info',
-          message: `Fare calculated for vehicle ${plateNumber}`,
-          details: {
-            plate_number: plateNumber,
-            entry_time: entryTime.toISOString(),
-            exit_time: exitTime.toISOString(),
-            duration_hours: durationHours,
-            fare_amount: fareAmount,
-            hourly_rate: hourlyRate
-          }
-        });
+        if (insertError) {
+          console.error('Error saving entry detection:', insertError);
+          throw insertError;
+        }
 
         toast({
-          title: "Vehicle Exited - Fare Calculated",
-          description: `${plateNumber}: $${Number(fareAmount).toFixed(2)} (${Number(durationHours).toFixed(1)}h)`,
+          title: "Vehicle Entered",
+          description: `${plateNumber} - Entry recorded at ${entryTime.toLocaleTimeString()}`,
         });
       }
 
-      console.log(`Detection processed successfully for ${cameraType}: ${plateNumber}`);
+      // Reload detections to show the latest data
+      await loadDetections();
+
     } catch (err) {
-      console.error('Error handling detection:', err);
+      console.error('Error handling entry detection:', err);
       toast({
-        title: "Detection Error",
-        description: "Failed to process detection",
+        title: "Entry Error",
+        description: "Failed to process entry detection",
         variant: "destructive"
       });
     }
-  }, [toast]);
+  }, [toast, loadDetections]);
+
+  // Handle exit detection with improved fare calculation
+  const handleExitDetection = useCallback(async (plateNumber: string, confidence: number, imageData?: string) => {
+    try {
+      console.log(`Processing exit detection for plate: ${plateNumber}`);
+      
+      const exitTime = new Date();
+      const cameraLocation = "Exit Camera";
+
+      // Find the most recent entry record without an exit
+      const { data: entryRecords, error: entryError } = await supabase
+        .from('vehicle_detections')
+        .select('*')
+        .eq('plate_number', plateNumber)
+        .is('exit_time', null)
+        .not('entry_time', 'is', null)
+        .order('entry_time', { ascending: false })
+        .limit(1);
+
+      if (entryError) {
+        console.error('Error finding entry record:', entryError);
+        throw entryError;
+      }
+
+      if (!entryRecords || entryRecords.length === 0) {
+        console.log(`No active entry found for ${plateNumber}. Creating exit-only record.`);
+        
+        // Create exit-only record
+        await supabase
+          .from('vehicle_detections')
+          .insert({
+            plate_number: plateNumber,
+            confidence_score: confidence,
+            camera_location: cameraLocation,
+            image_url: imageData,
+            status: 'exit_without_entry',
+            vehicle_type: 'vehicle',
+            exit_time: exitTime.toISOString(),
+            detection_timestamp: exitTime.toISOString()
+          });
+
+        toast({
+          title: "Exit Recorded",
+          description: `${plateNumber} - No entry record found`,
+          variant: "destructive"
+        });
+        
+        await loadDetections();
+        return;
+      }
+
+      const entryRecord = entryRecords[0];
+      const entryTime = new Date(entryRecord.entry_time);
+      
+      console.log(`Found entry at: ${entryTime.toISOString()}, Exit at: ${exitTime.toISOString()}`);
+
+      // Calculate duration in minutes
+      const durationMinutes = Math.floor((exitTime.getTime() - entryTime.getTime()) / (1000 * 60));
+      console.log(`Duration: ${durationMinutes} minutes`);
+
+      if (durationMinutes < 0) {
+        console.error('Invalid duration - exit time is before entry time');
+        toast({
+          title: "Calculation Error",
+          description: "Invalid time sequence detected",
+          variant: "destructive"
+        });
+        return;
+      }
+
+      // Get current fare rates
+      const fareRates = await getFareRates();
+      
+      // Use the database function for consistent fare calculation
+      const { data: fareCalculation, error: fareCalcError } = await supabase
+        .rpc('calculate_vehicle_fare', {
+          entry_timestamp: entryTime.toISOString(),
+          exit_timestamp: exitTime.toISOString(),
+          rate_per_hour: fareRates.hourly_rate,
+          minimum_charge: fareRates.minimum_charge,
+          grace_minutes: fareRates.grace_period_minutes
+        });
+
+      if (fareCalcError) {
+        console.error('Error calculating fare:', fareCalcError);
+        throw fareCalcError;
+      }
+
+      const calculatedFare = fareCalculation?.[0];
+      const durationHours = calculatedFare?.duration_hours || 0;
+      const fareAmount = calculatedFare?.fare_amount || fareRates.minimum_charge;
+
+      console.log(`Calculated: ${durationHours}h, $${fareAmount}`);
+
+      // Update the entry record with exit information
+      const { data: updatedRecord, error: updateError } = await supabase
+        .from('vehicle_detections')
+        .update({
+          exit_time: exitTime.toISOString(),
+          duration_hours: Number(durationHours),
+          fare_amount: Number(fareAmount),
+          hourly_rate: Number(fareRates.hourly_rate),
+          status: 'completed',
+          detection_timestamp: exitTime.toISOString() // Update to show latest activity
+        })
+        .eq('id', entryRecord.id)
+        .select()
+        .single();
+
+      if (updateError) {
+        console.error('Error updating exit record:', updateError);
+        throw updateError;
+      }
+
+      // Log the transaction
+      await supabase.from('system_logs').insert({
+        log_type: 'info',
+        message: `Fare calculated for vehicle ${plateNumber}`,
+        details: {
+          plate_number: plateNumber,
+          entry_time: entryTime.toISOString(),
+          exit_time: exitTime.toISOString(),
+          duration_minutes: durationMinutes,
+          duration_hours: Number(durationHours),
+          fare_amount: Number(fareAmount),
+          hourly_rate: Number(fareRates.hourly_rate)
+        }
+      });
+
+      // Show success message with fare details
+      const durationText = durationMinutes < 60 
+        ? `${durationMinutes}m` 
+        : `${Math.floor(durationMinutes / 60)}h ${durationMinutes % 60}m`;
+
+      toast({
+        title: "Exit Processed - Fare Calculated",
+        description: `${plateNumber}: $${Number(fareAmount).toFixed(2)} (${durationText} parked)`,
+      });
+
+      // Reload detections to show updated data
+      await loadDetections();
+
+    } catch (err) {
+      console.error('Error handling exit detection:', err);
+      toast({
+        title: "Exit Error",
+        description: "Failed to process exit detection",
+        variant: "destructive"
+      });
+    }
+  }, [toast, loadDetections, getFareRates]);
+
+  // Main detection handler that routes to entry or exit
+  const handleNewDetection = useCallback(async (plateNumber: string, confidence: number, imageData?: string, cameraType: 'entry' | 'exit' = 'entry') => {
+    if (cameraType === 'entry') {
+      await handleEntryDetection(plateNumber, confidence, imageData);
+    } else if (cameraType === 'exit') {
+      await handleExitDetection(plateNumber, confidence, imageData);
+    }
+  }, [handleEntryDetection, handleExitDetection]);
 
   // Export detections data
   const handleExportData = useCallback(async () => {
@@ -322,12 +353,16 @@ const Index = () => {
         return;
       }
 
-      // Convert to CSV
+      // Convert to CSV with improved format
       const csvContent = [
-        'Plate Number,Confidence,Detection Time,Camera Location,Status,Entry Time,Exit Time,Duration Hours,Fare Amount,Hourly Rate',
-        ...data.map(d => 
-          `${d.plate_number},${d.confidence_score}%,${new Date(d.detection_timestamp || d.created_at).toLocaleString()},${d.camera_location},${d.status},${d.entry_time ? new Date(d.entry_time).toLocaleString() : ''},${d.exit_time ? new Date(d.exit_time).toLocaleString() : ''},${d.duration_hours || ''},${d.fare_amount || ''},${d.hourly_rate || ''}`
-        )
+        'Plate Number,Confidence,Detection Time,Camera Location,Status,Entry Time,Exit Time,Duration (Hours),Fare Amount,Hourly Rate',
+        ...data.map(d => {
+          const entryTime = d.entry_time ? new Date(d.entry_time).toLocaleString() : '';
+          const exitTime = d.exit_time ? new Date(d.exit_time).toLocaleString() : '';
+          const detectionTime = new Date(d.detection_timestamp || d.created_at).toLocaleString();
+          
+          return `${d.plate_number},${d.confidence_score}%,${detectionTime},${d.camera_location},${d.status},${entryTime},${exitTime},${d.duration_hours || ''},${d.fare_amount || ''},${d.hourly_rate || ''}`;
+        })
       ].join('\n');
 
       // Download file
@@ -343,7 +378,7 @@ const Index = () => {
 
       toast({
         title: "Export Complete",
-        description: "Vehicle detection data with fares exported successfully",
+        description: "Vehicle detection data exported successfully",
       });
     } catch (err) {
       console.error('Export error:', err);
@@ -367,12 +402,12 @@ const Index = () => {
       .on(
         'postgres_changes',
         {
-          event: 'INSERT',
+          event: '*',
           schema: 'public',
           table: 'vehicle_detections'
         },
         (payload) => {
-          console.log('Real-time detection received:', payload);
+          console.log('Real-time detection update:', payload);
           // Reload detections to get the latest data
           loadDetections();
         }
