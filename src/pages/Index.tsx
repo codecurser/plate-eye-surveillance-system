@@ -50,7 +50,7 @@ const Index = () => {
         timestamp: new Date(detection.detection_timestamp || detection.created_at),
         confidence: detection.confidence_score || 0,
         location: detection.camera_location || 'Unknown Camera',
-        cameraType: detection.camera_location?.toLowerCase().includes('exit') ? 'exit' : 'entry'
+        cameraType: (detection.camera_location?.toLowerCase().includes('exit') ? 'exit' : 'entry') as 'entry' | 'exit'
       }));
 
       setDetections(formattedDetections);
